@@ -1,18 +1,42 @@
 #include <ESP8266WiFi.h>
 #include <DHT.h>
-#include <PubSubClient.h>
+
+#include <Arduino_MQTT_Client.h>
+#include <Server_Side_RPC.h>
+#include <Attribute_Request.h>
+#include <Shared_Attribute_Update.h>
+#include <ThingsBoard.h>
 
 // Configuración WiFi
 const char* ssid = "Clerd";
 const char* password = "Elena1720clerd";
 
-// Configuración MQTT para Kaa IoT
-const char* mqtt_server = "mqtt.cloud.kaaiot.com";
-const int mqtt_port = 1883;
-const char* mqtt_topic = "kp1/d3skmqqm6fhc73agdbpg-v1/dcx/PVM1Xoqjhx/json";
+// Configuración MQTT para ThingsBoard
+const char token[] = "ccxz31zy0gbdpy8hgomj";
+constexpr char tb_server[] = "hostName";
+constexpr uint16_t tb_port = 1883U;
 
-WiFiClient espClient;
-PubSubClient client(espClient);
+constexpr uint32_t MAX_MESSAGE_SIZE = 256U;
+constexpr uint32_t SERIAL_DEBUG_BAUD = 115200U;
+
+WiFiClient mqttClient;
+Arduino_MQTT_Client mqttClient(wifiClient);
+
+// ################################### NI IDEA DE LO QUE PASA ACA ###################################
+// Initialize used apis
+Server_Side_RPC<3U, 5U> rpc;
+Attribute_Request<2U, MAX_ATTRIBUTES> attr_request;
+Shared_Attribute_Update<3U, MAX_ATTRIBUTES> shared_update;
+
+const std::array<IAPI_Implementation*, 3U> apis = {
+    &rpc,
+    &attr_request,
+    &shared_update
+};
+// ################################### NI IDEA DE LO QUE PASA ACA ###################################
+
+// Initialize ThingsBoard instance with the maximum needed buffer size, stack size and the apis we want to use
+ThingsBoard tb(mqttClient, MAX_MESSAGE_SIZE, Default_Max_Stack_Size, apis);
 
 // === DATA ===
 // Water Sensor
@@ -30,6 +54,16 @@ DHT dht_sensor(DHT_SENSOR_PIN, DHT_SENSOR_TYPE);
 int registration_counter = 0;
 // === DATA ===
 
+void initWiFi() {
+  Serial.println("Conectando a internet...");
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("Conectado");
+}
+
 void setup() {
   Serial.begin(9600);
 
@@ -38,31 +72,17 @@ void setup() {
 
   dht_sensor.begin();            // initialize the DHT sensor
 
-  // Conectar a WiFi
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("\nWiFi conectado");
-
-  // Configurar servidor MQTT
-  client.setServer(mqtt_server, mqtt_port);
+  initWiFi();                    // Conectar a WiFi
 }
 
-void reconnect() {
-  while (!client.connected()) {
-    Serial.print("Conectando a MQTT...");
-    // Intenta conectar (usa un ID único si tienes varios dispositivos)
-    if (client.connect("ESP32_KaaClient")) {
-      Serial.println("conectado");
-    } else {
-      Serial.print("falló, rc=");
-      Serial.print(client.state());
-      Serial.println(" reintentando en 5 segundos");
-      delay(5000);
-    }
+const bool reconnect() {
+  const wl_status_t status = WiFi.status();
+  if (status == WL_CONNECTED) {
+    return true;
   }
+
+  initWiFi();
+  return true;
 }
 
 void loop() {
@@ -113,11 +133,13 @@ void loop() {
     Serial.print("\nRegistration N°");
     Serial.println(registration_counter);
 
-    // Publicar en el topic
-    if (client.publish(mqtt_topic, payload.c_str())) {
-      Serial.println("Mensaje publicado: " + payload);
-    } else {
-      Serial.println("Error al publicar");
-    }
+    tb.sendTelemetryData("temperature", temperature_C);
+    tb.sendTelemetryData("humidity", humi);
+    tb.sendTelemetryData("water_lvl", waterValue);
+    tb.sendAttributeData("rssi", WiFi.RSSI());
+    tb.sendAttributeData("bssid", WiFi.BSSIDstr().c_str());
+    tb.sendAttributeData("localIp", WiFi.localIP().toString().c_str());
+    tb.sendAttributeData("ssid", WiFi.SSID().c_str());
+    tb.sendAttributeData("channel", WiFi.channel());
   }
 }
