@@ -1,145 +1,123 @@
 #include <ESP8266WiFi.h>
 #include <DHT.h>
 
-#include <Arduino_MQTT_Client.h>
-#include <Server_Side_RPC.h>
-#include <Attribute_Request.h>
-#include <Shared_Attribute_Update.h>
-#include <ThingsBoard.h>
-
-// Configuración WiFi
+// ============= CONFIG WIFI =============
 const char* ssid = "Clerd";
 const char* password = "Elena1720clerd";
 
-// Configuración MQTT para ThingsBoard
-const char token[] = "ccxz31zy0gbdpy8hgomj";
-constexpr char tb_server[] = "hostName";
-constexpr uint16_t tb_port = 1883U;
+// ============= CONFIG THINGSBOARD =============
+#include <Arduino_MQTT_Client.h>
+#include <ThingsBoard.h>
+
+const char TOKEN[] = "ccxz31zy0gbdpy8hgomj";
+constexpr char TB_SERVER[] = "iot.ceisufro.cl";   // <-- Cambia si usas tu propio servidor
+constexpr uint16_t TB_PORT = 1883;
 
 constexpr uint32_t MAX_MESSAGE_SIZE = 256U;
 constexpr uint32_t SERIAL_DEBUG_BAUD = 115200U;
 
-WiFiClient mqttClient;
+// Cliente MQTT simple (sin RPC ni atributos)
+WiFiClient wifiClient;
 Arduino_MQTT_Client mqttClient(wifiClient);
 
-// ################################### NI IDEA DE LO QUE PASA ACA ###################################
-// Initialize used apis
-Server_Side_RPC<3U, 5U> rpc;
-Attribute_Request<2U, MAX_ATTRIBUTES> attr_request;
-Shared_Attribute_Update<3U, MAX_ATTRIBUTES> shared_update;
+// ThingsBoard (sin APIs extra)
+ThingsBoard tb(mqttClient, MAX_MESSAGE_SIZE);
 
-const std::array<IAPI_Implementation*, 3U> apis = {
-    &rpc,
-    &attr_request,
-    &shared_update
-};
-// ################################### NI IDEA DE LO QUE PASA ACA ###################################
+// ============= SENSORES =============
 
-// Initialize ThingsBoard instance with the maximum needed buffer size, stack size and the apis we want to use
-ThingsBoard tb(mqttClient, MAX_MESSAGE_SIZE, Default_Max_Stack_Size, apis);
-
-// === DATA ===
-// Water Sensor
+// Water sensor
 #define W_PWR_PIN D7
 #define SIGNAL_PIN A0
+int waterValue = 0;
 
-int waterValue = 0;  // variable to store the water sensor's value
-
-// Humidity Sensor
-#define DHT_SENSOR_PIN  D6 // The ESP8266 pin D7 connected to DHT11 sensor
+// Humidity and temp sensor
+#define DHT_SENSOR_PIN  D6
 #define DHT_SENSOR_TYPE DHT11
-
 DHT dht_sensor(DHT_SENSOR_PIN, DHT_SENSOR_TYPE);
 
-int registration_counter = 0;
-// === DATA ===
+// Timer para telemetría
+unsigned long lastTelemetry = 0;
+const unsigned long TELEMETRY_INTERVAL = 5000; // 5 segundos
 
+// ==================================================
+// WIFI
+// ==================================================
 void initWiFi() {
-  Serial.println("Conectando a internet...");
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.println("Conectando a WiFi...");
+  WiFi.begin(ssid, password);
+
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("Conectado");
+  Serial.println("\nConectado a WiFi");
 }
 
-void setup() {
-  Serial.begin(9600);
+// ==================================================
+void reconnectTB() {
+  while (!tb.connected()) {
+    Serial.print("Conectando a ThingsBoard... ");
 
-  pinMode(W_PWR_PIN, OUTPUT);    // Configure D7 pin as an OUTPUT
-  digitalWrite(W_PWR_PIN, LOW);  // turn the sensor OFF
-
-  dht_sensor.begin();            // initialize the DHT sensor
-
-  initWiFi();                    // Conectar a WiFi
-}
-
-const bool reconnect() {
-  const wl_status_t status = WiFi.status();
-  if (status == WL_CONNECTED) {
-    return true;
-  }
-
-  initWiFi();
-  return true;
-}
-
-void loop() {
-  if (!client.connected()) {
-    reconnect();
-  }
-  client.loop();
-
-  // Publicar datos cada 10 segundos
-  static unsigned long lastMsg = 0;
-  unsigned long now = millis();
-
-  if (now - lastMsg > 10000) {
-    // HUMIDITY SENSOR
-    float humi  = dht_sensor.readHumidity();                // read humidity
-    float temperature_C = dht_sensor.readTemperature();     // read temperature in Celsius
-    float temperature_F = dht_sensor.readTemperature(true); // read temperature in Fahrenheit
-
-    if ( isnan(temperature_C) || isnan(temperature_F) || isnan(humi)) { // check whether the reading is successful or not
-      Serial.println("Failed to read from DHT sensor!");
+    if (tb.connect(TB_SERVER, TOKEN, TB_PORT)) {
+      Serial.println("Conectado!");
     } else {
-      Serial.print("Humidity: "); Serial.print(humi); Serial.print("%");
-      Serial.print("  |  ");
-      Serial.print("Temperature: ");  
-      Serial.print(temperature_C);  Serial.print("°C  ~  ");
-      Serial.print(temperature_F);  Serial.println("°F");
+      Serial.println("Fallo al conectar. Reintentando en 3s...");
+      delay(3000);
+    }
+  }
+}
+
+// ==================================================
+void setup() {
+  Serial.begin(SERIAL_DEBUG_BAUD);
+
+  pinMode(W_PWR_PIN, OUTPUT);
+  digitalWrite(W_PWR_PIN, LOW);
+
+  dht_sensor.begin();
+  initWiFi();
+}
+
+// ==================================================
+void loop() {
+
+  if (WiFi.status() != WL_CONNECTED) {
+    initWiFi();
+  }
+
+  if (!tb.connected()) {
+    reconnectTB();
+  }
+
+  tb.loop(); // Mantener MQTT activa
+
+  // === TELEMETRÍA CADA 5s ===
+  unsigned long now = millis();
+  if (now - lastTelemetry >= TELEMETRY_INTERVAL) {
+    lastTelemetry = now;
+
+    // --- Leer DHT11 ---
+    float humi = dht_sensor.readHumidity();
+    float tempC = dht_sensor.readTemperature();
+
+    if (isnan(humi) || isnan(tempC)) {
+      Serial.println("Error leyendo DHT11");
     }
 
-    // WATER SENSOR
-    digitalWrite(W_PWR_PIN, HIGH);   // turn the sensor ON
-    delay(10);                       // wait 10 milliseconds
-    waterValue = analogRead(SIGNAL_PIN);  // read the analog value from sensor
-    digitalWrite(W_PWR_PIN, LOW);    // turn the sensor OFF
+    // --- Leer sensor de agua ---
+    digitalWrite(W_PWR_PIN, HIGH);
+    delay(10);
+    waterValue = analogRead(SIGNAL_PIN);
+    digitalWrite(W_PWR_PIN, LOW);
 
-    Serial.print("Water level: ");
-    Serial.println(waterValue);
+    // --- Mostrar en Serial ---
+    Serial.print("Temp: "); Serial.print(tempC); Serial.print(" °C  |  ");
+    Serial.print("Humedad: "); Serial.print(humi); Serial.print(" %  |  ");
+    Serial.print("Nivel Agua: "); Serial.println(waterValue);
 
-
-    lastMsg = now;
-
-    // Crear el mensaje JSON
-    String payload = "{\"tmp\":" + String(temperature_C) +
-                      ",\"hum\":" + String(humi) +
-                      ",\"wtr\":" + String(waterValue) +
-                      "}";
-
-    registration_counter += 1;
-    Serial.print("\nRegistration N°");
-    Serial.println(registration_counter);
-
-    tb.sendTelemetryData("temperature", temperature_C);
+    // --- Enviar Telemetría ---
+    tb.sendTelemetryData("temperature", tempC);
     tb.sendTelemetryData("humidity", humi);
-    tb.sendTelemetryData("water_lvl", waterValue);
-    tb.sendAttributeData("rssi", WiFi.RSSI());
-    tb.sendAttributeData("bssid", WiFi.BSSIDstr().c_str());
-    tb.sendAttributeData("localIp", WiFi.localIP().toString().c_str());
-    tb.sendAttributeData("ssid", WiFi.SSID().c_str());
-    tb.sendAttributeData("channel", WiFi.channel());
+    tb.sendTelemetryData("water_level", waterValue);
   }
 }
