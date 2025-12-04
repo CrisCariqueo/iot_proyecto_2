@@ -14,7 +14,7 @@ constexpr char TB_SERVER[] = "iot.ceisufro.cl";
 constexpr uint16_t TB_PORT = 1883;
 
 constexpr uint32_t MAX_MESSAGE_SIZE = 256U;
-constexpr uint32_t SERIAL_DEBUG_BAUD = 115200U;
+constexpr uint32_t SERIAL_DEBUG_BAUD = 9600U;
 
 WiFiClient wifiClient;
 Arduino_MQTT_Client mqttClient(wifiClient);
@@ -139,10 +139,10 @@ void loop() {
     digitalWrite(UV_PWR_PIN, LOW);
 
     // -------------------- Serial Debug --------------------
-    Serial.print("Temp: "); Serial.print(tempC);
-    Serial.print(" | Humedad: "); Serial.print(humi);
-    Serial.print(" | Agua: "); Serial.print(waterValue);
-    Serial.print(" | UV: "); Serial.println(uvIntensity);
+    Serial.print("Agua: ");       Serial.print(waterValue);
+    Serial.print(" | UV: ");      Serial.print(uvIntensity);
+    Serial.print(" | Temp: ");    Serial.print(tempC);
+    Serial.print(" | Humedad: "); Serial.println(humi);
 
     // -------------------- Envío Telemetría --------------------
     tb.sendTelemetryData("temperature", tempC);
