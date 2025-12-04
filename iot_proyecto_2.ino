@@ -71,14 +71,16 @@ float mapfloat(float x, float in_min, float in_max, float out_min, float out_max
 
 // ============= WIFI =============
 void initWiFi() {
-  Serial.println("Conectando a WiFi...");
+  Serial.print("Conectando a WiFi...");
   WiFi.begin(ssid, password);
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("\nConectado a WiFi");
+  Serial.println(" Conectado a WiFi!");
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
 }
 
 
@@ -93,7 +95,10 @@ void setup() {
   digitalWrite(UV_PWR_PIN, LOW);
 
   dht_sensor.begin();
+
   initWiFi();
+  reconnectTB();
+  Serial.println();
 }
 
 
